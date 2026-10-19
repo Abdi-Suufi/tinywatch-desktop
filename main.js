@@ -13,22 +13,92 @@ const { Client } = require('@xhayper/discord-rpc');
 const DISCORD_CLIENT_ID = '1561584295481712673';
 const appStartedAt = new Date();
 let rpc;
+let rpcReady = false;
+let last = { key: '', start: 0 };
+let busy = false;
 
 async function connectDiscord() {
   rpc = new Client({ clientId: DISCORD_CLIENT_ID });
-
-  rpc.on('ready', () => {
-    rpc.user?.setActivity({
-      details: 'Using Tinywatch',
-      startTimestamp: appStartedAt,
-      largeImageKey: 'tinywatch',
-      largeImageText: 'Tinywatch',
-    }).catch(() => {});
-  });
-
-  rpc.on('disconnected', () => setTimeout(connectDiscord, 15000));
-
+  rpc.on('ready', () => { rpcReady = true; last = { key: '', start: 0 }; });
+  rpc.on('disconnected', () => { rpcReady = false; setTimeout(connectDiscord, 15000); });
   try { await rpc.login(); } catch { setTimeout(connectDiscord, 15000); }
+}
+
+// Finds the real player video across all frames, ignoring short ad clips
+async function readPlayback() {
+  if (!view || view.webContents.isDestroyed()) return null;
+  let best = null;
+  for (const f of view.webContents.mainFrame.framesInSubtree) {
+    try {
+      const r = await f.executeJavaScript(`(() => {
+        const v = document.querySelector('video');
+        return v ? { t: v.currentTime, d: v.duration, paused: v.paused } : null;
+      })()`);
+      if (r && isFinite(r.d) && r.d > 120 && (!best || r.d > best.d)) best = { ...r, url: f.url };
+    } catch {}
+  }
+  return best;
+}
+
+function parseEpisode(url) {
+  try {
+    const u = new URL(url);
+    const s = u.searchParams.get('s');
+    const e = u.searchParams.get('e');
+    if (s && e) return `Season ${s} · Episode ${e}`;
+  } catch {}
+  return undefined;
+}
+
+function cleanTitle() {
+  const t = view.webContents.getTitle() || '';
+  if (!t || /modern streaming platform/i.test(t)) return null;
+  return t.replace(/\s*[|\-–]\s*Tinywatch.*$/i, '').trim() || null;
+}
+
+async function updatePresence() {
+  if (busy || !rpcReady || !rpc.user) return;
+  busy = true;
+  try {
+    const pb = await readPlayback();
+    const base = { largeImageKey: 'tinywatch', largeImageText: 'Tinywatch' };
+
+    if (!pb) {
+      if (last.key !== 'browse') {
+        await rpc.user.setActivity({ ...base, details: 'Browsing Tinywatch', startTimestamp: appStartedAt });
+        last = { key: 'browse', start: 0 };
+      }
+      return;
+    }
+
+    const title = cleanTitle() || 'Watching on Tinywatch';
+    const episode = parseEpisode(pb.url);
+
+    if (pb.paused) {
+      const key = `paused|${title}|${episode}`;
+      if (last.key !== key) {
+        await rpc.user.setActivity({ ...base, details: title, state: episode ? `${episode} · Paused` : 'Paused' });
+        last = { key, start: 0 };
+      }
+      return;
+    }
+
+    const startMs = Date.now() - pb.t * 1000;
+const key = `play|${title}|${episode}`;
+if (last.key !== key || Math.abs(startMs - last.start) > 5000) {
+  const mins = Math.round(pb.d / 60);
+  const length = mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`;
+  await rpc.user.setActivity({
+    ...base,
+    details: title,
+    state: episode ? `${episode} · ${length}` : length,
+    startTimestamp: new Date(startMs),
+  });
+  last = { key, start: startMs };
+}
+  } catch {} finally {
+    busy = false;
+  }
 }
 
 // Tweak these to match your site exactly
@@ -124,6 +194,7 @@ function createWindow() {
 
 app.whenReady().then(() => {
   connectDiscord();
+  setInterval(updatePresence, 5000);
   app.setAppUserModelId('uk.co.tinywatch.desktop');
   session.defaultSession.webRequest.onBeforeRequest({ urls: BLOCKED }, (_d, cb) => cb({ cancel: true }));
   createWindow();
