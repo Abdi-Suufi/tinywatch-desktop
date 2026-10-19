@@ -1,4 +1,5 @@
-const { app, BrowserWindow, WebContentsView, nativeTheme, session, shell } = require('electron');
+const { app, BrowserWindow, WebContentsView, nativeTheme, session, shell, dialog } = require('electron');
+const { autoUpdater } = require('electron-updater');
 const path = require('path');
 
 const SITE = 'https://tinywatch.co.uk';
@@ -6,6 +7,29 @@ const ALLOWED_HOSTS = ['tinywatch.co.uk', 'www.tinywatch.co.uk'];
 const EMBED_HOSTS = [];
 const BLOCKED = ['*://*.doubleclick.net/*', '*://*.popads.net/*'];
 const BAR_HEIGHT = 36;
+
+const { Client } = require('@xhayper/discord-rpc');
+
+const DISCORD_CLIENT_ID = '1561584295481712673';
+const appStartedAt = new Date();
+let rpc;
+
+async function connectDiscord() {
+  rpc = new Client({ clientId: DISCORD_CLIENT_ID });
+
+  rpc.on('ready', () => {
+    rpc.user?.setActivity({
+      details: 'Using Tinywatch',
+      startTimestamp: appStartedAt,
+      largeImageKey: 'tinywatch',
+      largeImageText: 'Tinywatch',
+    }).catch(() => {});
+  });
+
+  rpc.on('disconnected', () => setTimeout(connectDiscord, 15000));
+
+  try { await rpc.login(); } catch { setTimeout(connectDiscord, 15000); }
+}
 
 // Tweak these to match your site exactly
 const THEMES = {
@@ -99,10 +123,35 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  connectDiscord();
   app.setAppUserModelId('uk.co.tinywatch.desktop');
   session.defaultSession.webRequest.onBeforeRequest({ urls: BLOCKED }, (_d, cb) => cb({ cancel: true }));
   createWindow();
   nativeTheme.on('updated', applyTheme);
+
+  if (app.isPackaged) {
+    autoUpdater.autoDownload = true;
+    autoUpdater.autoInstallOnAppQuit = true;
+    autoUpdater.on('error', (error) => console.error('Auto-updater error:', error));
+    autoUpdater.on('update-downloaded', () => {
+      dialog.showMessageBox(win, {
+        type: 'info',
+        buttons: ['Restart now', 'Later'],
+        defaultId: 0,
+        cancelId: 1,
+        title: 'Update ready',
+        message: 'An update is ready to install.',
+        detail: 'Restart Tinywatch to finish installing the update.',
+      }).then(({ response }) => {
+        if (response === 0) autoUpdater.quitAndInstall();
+      }).catch((error) => {
+        console.error('Failed to show update dialog:', error);
+      });
+    });
+    autoUpdater.checkForUpdates().catch((error) => {
+      console.error('Failed to check for updates:', error);
+    });
+  }
 });
 
 app.on('second-instance', () => {

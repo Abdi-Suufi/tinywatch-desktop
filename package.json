@@ -1,6 +1,6 @@
 {
   "name": "tinywatch-desktop",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "Tinywatch desktop app",
   "main": "main.js",
   "scripts": {
@@ -8,13 +8,31 @@
     "build": "electron-builder --win"
   },
   "build": {
-  "appId": "uk.co.tinywatch.desktop",
-  "productName": "Tinywatch",
-  "win": { "target": "nsis", "icon": "build/icon.png" },
-  "files": ["main.js", "preload.js", "offline.html", "titlebar.html", "build/icon.png"]
+    "appId": "uk.co.tinywatch.desktop",
+    "productName": "Tinywatch",
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.png"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "Abdi-Suufi",
+      "repo": "tinywatch-desktop"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "offline.html",
+      "titlebar.html",
+      "build/icon.png"
+    ]
   },
   "devDependencies": {
     "electron": "^44.9.0",
     "electron-builder": "^26.15.3"
+  },
+  "dependencies": {
+    "@xhayper/discord-rpc": "^1.5.1",
+    "electron-updater": "^6.8.9"
   }
 }
