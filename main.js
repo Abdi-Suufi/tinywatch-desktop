@@ -9,6 +9,7 @@ const BLOCKED = ['*://*.doubleclick.net/*', '*://*.popads.net/*'];
 const BAR_HEIGHT = 36;
 
 const { Client } = require('@xhayper/discord-rpc');
+const ActivityType = { Watching: 3 };
 
 const DISCORD_CLIENT_ID = '1561584295481712673';
 const appStartedAt = new Date();
@@ -50,6 +51,14 @@ function parseEpisode(url) {
   return undefined;
 }
 
+function formatTime(sec) {
+  const s = Math.floor(sec);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const ss = String(s % 60).padStart(2, '0');
+  return h ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`;
+}
+
 function cleanTitle() {
   const t = view.webContents.getTitle() || '';
   if (!t || /modern streaming platform/i.test(t)) return null;
@@ -61,7 +70,7 @@ async function updatePresence() {
   busy = true;
   try {
     const pb = await readPlayback();
-    const base = { largeImageKey: 'tinywatch', largeImageText: 'Tinywatch' };
+    const base = { type: ActivityType.Watching, largeImageKey: 'tinywatch', largeImageText: 'Tinywatch' };
 
     if (!pb) {
       if (last.key !== 'browse') {
@@ -74,28 +83,32 @@ async function updatePresence() {
     const title = cleanTitle() || 'Watching on Tinywatch';
     const episode = parseEpisode(pb.url);
 
+    // Discord's progress bar always keeps ticking, so a paused video shows
+    // its frozen position as text in the same "current / total" format
     if (pb.paused) {
-      const key = `paused|${title}|${episode}`;
+      const pos = `⏸ ${formatTime(pb.t)} / ${formatTime(pb.d)}`;
+      const key = `paused|${title}|${episode}|${pos}`;
       if (last.key !== key) {
-        await rpc.user.setActivity({ ...base, details: title, state: episode ? `${episode} · Paused` : 'Paused' });
+        await rpc.user.setActivity({ ...base, details: title, state: episode ? `${episode} · ${pos}` : pos });
         last = { key, start: 0 };
       }
       return;
     }
 
+    // Start + end timestamps on a Watching activity make Discord draw the
+    // "current time ——— total length" progress bar
     const startMs = Date.now() - pb.t * 1000;
-const key = `play|${title}|${episode}`;
-if (last.key !== key || Math.abs(startMs - last.start) > 5000) {
-  const mins = Math.round(pb.d / 60);
-  const length = mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`;
-  await rpc.user.setActivity({
-    ...base,
-    details: title,
-    state: episode ? `${episode} · ${length}` : length,
-    startTimestamp: new Date(startMs),
-  });
-  last = { key, start: startMs };
-}
+    const key = `play|${title}|${episode}`;
+    if (last.key !== key || Math.abs(startMs - last.start) > 5000) {
+      await rpc.user.setActivity({
+        ...base,
+        details: title,
+        state: episode,
+        startTimestamp: new Date(startMs),
+        endTimestamp: new Date(startMs + pb.d * 1000),
+      });
+      last = { key, start: startMs };
+    }
   } catch {} finally {
     busy = false;
   }
