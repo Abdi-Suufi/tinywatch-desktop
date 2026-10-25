@@ -1,4 +1,4 @@
-const { app, BrowserWindow, WebContentsView, nativeTheme, session, shell, dialog } = require('electron');
+const { app, BrowserWindow, WebContentsView, nativeTheme, session, shell, ipcMain } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const path = require('path');
 
@@ -205,6 +205,38 @@ function createWindow() {
   win.once('ready-to-show', () => win.show());
 }
 
+// Themed replacement for the native message box, which can't be styled
+function showUpdateDialog(version) {
+  const dlg = new BrowserWindow({
+    parent: win,
+    modal: true,
+    width: 400,
+    height: 170,
+    frame: false,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
+    show: false,
+    backgroundColor: theme().bg,
+    webPreferences: {
+      preload: path.join(__dirname, 'update-preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  const onChoice = (e, choice) => {
+    if (e.sender !== dlg.webContents) return;
+    ipcMain.removeListener('update:choice', onChoice);
+    dlg.close();
+    if (choice === 'restart') autoUpdater.quitAndInstall();
+  };
+  ipcMain.on('update:choice', onChoice);
+  dlg.on('closed', () => ipcMain.removeListener('update:choice', onChoice));
+  dlg.loadFile(path.join(__dirname, 'update.html'), { query: { v: version || '' } });
+  dlg.once('ready-to-show', () => dlg.show());
+}
+
 app.whenReady().then(() => {
   connectDiscord();
   setInterval(updatePresence, 5000);
@@ -217,21 +249,7 @@ app.whenReady().then(() => {
     autoUpdater.autoDownload = true;
     autoUpdater.autoInstallOnAppQuit = true;
     autoUpdater.on('error', (error) => console.error('Auto-updater error:', error));
-    autoUpdater.on('update-downloaded', () => {
-      dialog.showMessageBox(win, {
-        type: 'info',
-        buttons: ['Restart now', 'Later'],
-        defaultId: 0,
-        cancelId: 1,
-        title: 'Update ready',
-        message: 'An update is ready to install.',
-        detail: 'Restart Tinywatch to finish installing the update.',
-      }).then(({ response }) => {
-        if (response === 0) autoUpdater.quitAndInstall();
-      }).catch((error) => {
-        console.error('Failed to show update dialog:', error);
-      });
-    });
+    autoUpdater.on('update-downloaded', (info) => showUpdateDialog(info.version));
     autoUpdater.checkForUpdates().catch((error) => {
       console.error('Failed to check for updates:', error);
     });

@@ -1,6 +1,6 @@
 {
   "name": "tinywatch-desktop",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Tinywatch desktop app",
   "main": "main.js",
   "scripts": {
@@ -15,6 +15,20 @@
       "icon": "build/icon.png",
       "artifactName": "${productName}-Setup-${version}.${ext}"
     },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
+      "installerSidebar": "build/installerSidebar.bmp",
+      "uninstallerSidebar": "build/installerSidebar.bmp",
+      "installerHeader": "build/installerHeader.bmp",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "runAfterFinish": true
+    },
     "publish": {
       "provider": "github",
       "owner": "Abdi-Suufi",
@@ -25,6 +39,8 @@
       "preload.js",
       "offline.html",
       "titlebar.html",
+      "update.html",
+      "update-preload.js",
       "build/icon.png"
     ]
   },
