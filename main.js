@@ -229,7 +229,8 @@ function showUpdateDialog(version) {
     if (e.sender !== dlg.webContents) return;
     ipcMain.removeListener('update:choice', onChoice);
     dlg.close();
-    if (choice === 'restart') autoUpdater.quitAndInstall();
+    // Silent install + relaunch, otherwise the assisted NSIS wizard shows up
+    if (choice === 'restart') autoUpdater.quitAndInstall(true, true);
   };
   ipcMain.on('update:choice', onChoice);
   dlg.on('closed', () => ipcMain.removeListener('update:choice', onChoice));
