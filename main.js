@@ -1,4 +1,4 @@
-const { app, BrowserWindow, WebContentsView, nativeTheme, session, shell, ipcMain } = require('electron');
+const { app, BrowserWindow, WebContentsView, nativeTheme, session, shell, ipcMain, dialog } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const path = require('path');
 
@@ -17,13 +17,41 @@ let rpc;
 let rpcReady = false;
 let last = { key: '', start: 0 };
 let busy = false;
+let reconnectTimer = null;
+
+// Only one pending reconnect at a time, even if both login failure and
+// 'disconnected' fire for the same dropped connection
+function scheduleReconnect() {
+  rpcReady = false;
+  if (reconnectTimer) return;
+  reconnectTimer = setTimeout(() => { reconnectTimer = null; connectDiscord(); }, 15000);
+}
 
 async function connectDiscord() {
-  rpc = new Client({ clientId: DISCORD_CLIENT_ID });
-  rpc.on('ready', () => { rpcReady = true; last = { key: '', start: 0 }; });
-  rpc.on('disconnected', () => { rpcReady = false; setTimeout(connectDiscord, 15000); });
-  try { await rpc.login(); } catch { setTimeout(connectDiscord, 15000); }
+  if (rpc) {
+    const old = rpc;
+    rpc = null;
+    old.removeAllListeners();
+    old.destroy().catch(() => {});
+  }
+  const client = new Client({ clientId: DISCORD_CLIENT_ID });
+  rpc = client;
+  client.on('ready', () => { if (rpc === client) { rpcReady = true; last = { key: '', start: 0 }; } });
+  client.on('disconnected', () => { if (rpc === client) scheduleReconnect(); });
+  try { await client.login(); } catch { if (rpc === client) scheduleReconnect(); }
 }
+
+// The RPC library writes to Discord's IPC pipe without an 'error' listener,
+// so Discord closing/restarting mid-write surfaces as an uncaught EPIPE
+const PIPE_ERRORS = ['EPIPE', 'ECONNRESET', 'ECONNREFUSED', 'ENOENT'];
+process.on('uncaughtException', (err) => {
+  if (PIPE_ERRORS.includes(err?.code) && /IPCTransport|discord-rpc/.test(err.stack || '')) {
+    scheduleReconnect();
+    return;
+  }
+  console.error(err);
+  dialog.showErrorBox('A JavaScript error occurred in the main process', `Uncaught Exception:\n${err?.stack || err}`);
+});
 
 // Finds the real player video across all frames, ignoring short ad clips
 async function readPlayback() {
@@ -66,7 +94,7 @@ function cleanTitle() {
 }
 
 async function updatePresence() {
-  if (busy || !rpcReady || !rpc.user) return;
+  if (busy || !rpcReady || !rpc?.user) return;
   busy = true;
   try {
     const pb = await readPlayback();
