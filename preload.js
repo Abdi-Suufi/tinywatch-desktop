@@ -81,3 +81,75 @@ window.addEventListener('load', () => {
     requestAnimationFrame(() => { queued = false; place(); });
   }).observe(document.body, { childList: true, subtree: true });
 });
+
+// ---- Right-click menu ----
+// main.js decides what goes in the menu and runs the actions; this just draws
+// it, borrowing the nav pill's classes so it follows the site's theme.
+
+const ITEM_CLASS = 'text-gray-300 hover:bg-white/10 hover:text-yellow-300';
+const MENU_FALLBACK = 'rounded-xl border border-yellow-500/20 bg-black/80 backdrop-blur-md';
+let menu;
+
+function closeMenu() {
+  if (menu) { menu.remove(); menu = null; }
+}
+
+function showMenu({ x, y, items }) {
+  closeMenu();
+  const pill = document.querySelector('nav [data-nav-pill]');
+  menu = document.createElement('div');
+  menu.id = 'tw-context-menu';
+  menu.setAttribute('role', 'menu');
+  // Pill classes give the themed background/border/blur; layout is ours
+  menu.className = pill ? pill.className : MENU_FALLBACK;
+  menu.style.cssText = 'position:fixed;z-index:2147483647;display:block;min-width:200px;padding:4px;'
+    + 'font:600 13px/1 system-ui,"Segoe UI",sans-serif;user-select:none;';
+
+  for (const item of items) {
+    if (item.type === 'separator') {
+      const sep = document.createElement('div');
+      sep.className = 'bg-white/15';
+      sep.style.cssText = 'height:1px;margin:4px 6px;';
+      menu.appendChild(sep);
+      continue;
+    }
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.setAttribute('role', 'menuitem');
+    row.className = `rounded-lg transition-colors ${ITEM_CLASS}`;
+    row.style.cssText = 'display:flex;width:100%;align-items:center;justify-content:space-between;gap:24px;'
+      + 'padding:8px 10px;border:0;background-color:transparent;text-align:left;cursor:pointer;font:inherit;';
+    row.disabled = !item.enabled;
+    if (!item.enabled) row.style.cssText += 'opacity:.4;cursor:default;pointer-events:none;';
+    const label = document.createElement('span');
+    label.textContent = item.label;
+    row.appendChild(label);
+    if (item.key) {
+      const key = document.createElement('span');
+      key.textContent = item.key;
+      key.style.cssText = 'opacity:.55;font-weight:500;';
+      row.appendChild(key);
+    }
+    row.addEventListener('click', () => { closeMenu(); ipcRenderer.send('ctx:action', item.id); });
+    menu.appendChild(row);
+  }
+
+  // Keep focus and selection in the text field while clicking the menu
+  menu.addEventListener('mousedown', (e) => e.preventDefault());
+  document.body.appendChild(menu);
+
+  // Keep it on screen
+  const r = menu.getBoundingClientRect();
+  const left = Math.min(x, innerWidth - r.width - 4);
+  const top = y + r.height > innerHeight ? Math.max(4, y - r.height) : y;
+  menu.style.left = `${Math.max(4, left)}px`;
+  menu.style.top = `${top}px`;
+}
+
+ipcRenderer.on('ctx:show', (_e, data) => showMenu(data));
+
+addEventListener('mousedown', (e) => { if (menu && !menu.contains(e.target)) closeMenu(); }, true);
+addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); }, true);
+addEventListener('scroll', closeMenu, true);
+addEventListener('resize', closeMenu);
+addEventListener('blur', closeMenu);

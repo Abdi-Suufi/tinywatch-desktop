@@ -1,4 +1,4 @@
-const { app, BrowserWindow, WebContentsView, nativeTheme, session, shell, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, WebContentsView, nativeTheme, session, shell, ipcMain, dialog, clipboard } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const path = require('path');
 
@@ -182,6 +182,13 @@ const FRAME_CSS = `
     border: 1px solid rgba(234,179,8,.2);
   }
   #tw-window-controls.tw-wc-floating .tw-wc-sep { display: none; }
+
+  /* Scrollbar: drop the native thin scrollbar (it has up/down arrows) so the
+     site's own ::-webkit-scrollbar styling applies, and hide the arrow buttons */
+  * { scrollbar-width: auto !important; scrollbar-color: auto !important; }
+  ::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+  /* !important: the site's own 12px rule otherwise wins over injected CSS */
+  ::-webkit-scrollbar { width: 5px !important; height: 5px !important; }
 `;
 
 ipcMain.on('win:minimize', (e) => { if (e.sender === view?.webContents) win.minimize(); });
@@ -201,12 +208,15 @@ function createWindow() {
     icon: path.join(__dirname, 'build', 'icon.png'),
     backgroundColor: t.bg,
     autoHideMenuBar: true,
+    title: 'Tinywatch',
     titleBarStyle: 'hidden',
   });
 
   // Blank base page under the site view. Don't put drag regions here: they
   // would sit on top of the site's nav and block clicks.
   win.loadURL('about:blank');
+  // Keep the taskbar/Alt+Tab name as Tinywatch instead of the blank page's title
+  win.on('page-title-updated', (e) => e.preventDefault());
 
   // The site lives in its own view underneath
   view = new WebContentsView({
@@ -226,6 +236,42 @@ function createWindow() {
   const wc = view.webContents;
 
   wc.on('dom-ready', () => { wc.insertCSS(FRAME_CSS).catch(() => {}); });
+
+  // Browser-style right-click menu (Electron has none by default). It's drawn
+  // in the page by preload.js so it matches the site's theme; the actions
+  // themselves run here.
+  let menuLink = '';
+  wc.on('context-menu', (_e, params) => {
+    const { isEditable, editFlags, selectionText, linkURL, x, y } = params;
+    const items = [];
+    if (isEditable) {
+      items.push(
+        { id: 'undo', label: 'Undo', key: 'Ctrl+Z', enabled: editFlags.canUndo },
+        { id: 'redo', label: 'Redo', key: 'Ctrl+Y', enabled: editFlags.canRedo },
+        { type: 'separator' },
+        { id: 'cut', label: 'Cut', key: 'Ctrl+X', enabled: editFlags.canCut },
+        { id: 'copy', label: 'Copy', key: 'Ctrl+C', enabled: editFlags.canCopy },
+        { id: 'paste', label: 'Paste', key: 'Ctrl+V', enabled: editFlags.canPaste },
+        { type: 'separator' },
+        { id: 'selectAll', label: 'Select all', key: 'Ctrl+A', enabled: editFlags.canSelectAll },
+      );
+    } else if (selectionText.trim()) {
+      items.push({ id: 'copy', label: 'Copy', key: 'Ctrl+C', enabled: true });
+    }
+    menuLink = linkURL || '';
+    if (linkURL) {
+      if (items.length) items.push({ type: 'separator' });
+      items.push({ id: 'copyLink', label: 'Copy link address', enabled: true });
+    }
+    if (items.length) wc.send('ctx:show', { x, y, items });
+  });
+
+  const MENU_ACTIONS = ['undo', 'redo', 'cut', 'copy', 'paste', 'selectAll'];
+  ipcMain.on('ctx:action', (e, id) => {
+    if (e.sender !== wc) return;
+    if (id === 'copyLink') { if (menuLink) clipboard.writeText(menuLink); }
+    else if (MENU_ACTIONS.includes(id)) wc[id]();
+  });
 
   wc.on('did-fail-load', (_e, code, _d, _u, isMainFrame) => {
     if (isMainFrame && code !== -3) wc.loadFile(path.join(__dirname, 'offline.html'));
@@ -256,7 +302,58 @@ function createWindow() {
 }
 
 // Themed replacement for the native message box, which can't be styled
-function showUpdateDialog(version) {
+// Reads the colours of whatever theme the site is using (gold, ocean, custom,
+// light/dark...) straight off the live page, so the prompt matches it
+async function siteColors() {
+  try {
+    return await view.webContents.executeJavaScript(`(() => {
+      const pill = document.querySelector('nav [data-nav-pill]');
+      if (!pill) return null;
+      // The site uses oklch/oklab colours; paint each one to a pixel to get plain rgba
+      const ctx = document.createElement('canvas').getContext('2d', { willReadFrequently: true });
+      const rgba = (color) => {
+        if (!color) return '';
+        ctx.clearRect(0, 0, 1, 1);
+        ctx.fillStyle = 'transparent'; // an invalid colour would otherwise reuse the last one
+        ctx.fillStyle = color;
+        ctx.fillRect(0, 0, 1, 1);
+        const [r, g, b, a] = ctx.getImageData(0, 0, 1, 1).data;
+        return 'rgba(' + r + ', ' + g + ', ' + b + ', ' + +(a / 255).toFixed(2) + ')';
+      };
+      const css = (el, prop) => el ? rgba(getComputedStyle(el)[prop]) : '';
+      const links = [...pill.querySelectorAll('a')];
+      const active = pill.querySelector('[aria-current="page"]');
+      const idle = links.find((a) => a !== active);
+      const logo = document.querySelector('nav a[href="/"]:not([data-nav-pill] a)');
+      const gradient = logo ? getComputedStyle(logo).backgroundImage : '';
+      const logoColor = rgba((gradient.match(/(rgba?|oklch|oklab)\\([^)]+\\)/) || [''])[0]);
+      const bg = [document.body, document.documentElement]
+        .map((el) => css(el, 'backgroundColor'))
+        .find((c) => c && c !== 'rgba(0, 0, 0, 0)' && c !== 'transparent');
+      return {
+        bg: bg || '',
+        panel: css(pill, 'backgroundColor'),
+        border: css(pill, 'borderTopColor'),
+        fg: css(active, 'color') || css(idle, 'color'),
+        muted: css(idle, 'color'),
+        accent: logoColor || css(active, 'color'),
+        light: document.documentElement.getAttribute('data-mode') === 'light',
+      };
+    })()`);
+  } catch {
+    return null;
+  }
+}
+
+// 'rgb(1, 2, 3)' / 'rgba(...)' -> '#010203' (ignores alpha), for the window background
+function toHex(color) {
+  const m = /rgba?\(([^)]+)\)/.exec(color || '');
+  if (!m) return null;
+  return '#' + m[1].split(',').slice(0, 3).map((n) => (+n).toString(16).padStart(2, '0')).join('');
+}
+
+async function showUpdateDialog(version) {
+  const colors = await siteColors();
   const dlg = new BrowserWindow({
     parent: win,
     modal: true,
@@ -267,7 +364,7 @@ function showUpdateDialog(version) {
     minimizable: false,
     maximizable: false,
     show: false,
-    backgroundColor: theme().bg,
+    backgroundColor: toHex(colors?.bg) || theme().bg,
     webPreferences: {
       preload: path.join(__dirname, 'update-preload.js'),
       contextIsolation: true,
@@ -284,7 +381,9 @@ function showUpdateDialog(version) {
   };
   ipcMain.on('update:choice', onChoice);
   dlg.on('closed', () => ipcMain.removeListener('update:choice', onChoice));
-  dlg.loadFile(path.join(__dirname, 'update.html'), { query: { v: version || '' } });
+  dlg.loadFile(path.join(__dirname, 'update.html'), {
+    query: { v: version || '', c: colors ? JSON.stringify(colors) : '' },
+  });
   dlg.once('ready-to-show', () => dlg.show());
 }
 

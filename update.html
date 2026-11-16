@@ -23,7 +23,7 @@
     border: 1px solid var(--border); background: var(--btn); color: var(--fg); cursor: pointer;
   }
   button:hover { filter: brightness(1.15); }
-  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent, #fff); }
   button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 </style>
 </head>
@@ -35,7 +35,33 @@
     <button id="restart" class="primary" autofocus>Restart now</button>
   </div>
 <script>
-  const version = new URLSearchParams(location.search).get('v');
+  const params = new URLSearchParams(location.search);
+  const version = params.get('v');
+
+  // Site theme colours read from the live page (see siteColors in main.js)
+  try {
+    const c = JSON.parse(params.get('c') || 'null');
+    if (c) {
+      const root = document.documentElement.style;
+      const set = (name, value) => { if (value) root.setProperty(name, value); };
+      set('--bg', c.bg);
+      set('--fg', c.fg);
+      set('--muted', c.muted);
+      set('--border', c.border);
+      set('--btn', c.panel);
+      set('--accent', c.accent);
+      // Pick whichever of dark/white text has more contrast on the accent (WCAG)
+      const rgb = (c.accent || '').match(/\d+(\.\d+)?/g);
+      if (rgb) {
+        const lin = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+        const [r, g, b] = rgb.slice(0, 3).map(Number).map(lin);
+        const L = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        const vsWhite = 1.05 / (L + 0.05), vsDark = (L + 0.05) / 0.0555; // #111 ≈ 0.0056
+        set('--on-accent', vsDark >= vsWhite ? '#111' : '#fff');
+      }
+    }
+  } catch {}
+
   if (version) document.getElementById('msg').textContent =
     `Tinywatch ${version} has been downloaded. Restart to finish installing it.`;
   document.getElementById('restart').onclick = () => window.updateDialog.choose('restart');
