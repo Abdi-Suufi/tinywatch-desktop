@@ -1,6 +1,6 @@
 {
   "name": "tinywatch-desktop",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "description": "Tinywatch desktop app",
   "main": "main.js",
   "scripts": {
@@ -38,7 +38,6 @@
       "main.js",
       "preload.js",
       "offline.html",
-      "titlebar.html",
       "update.html",
       "update-preload.js",
       "build/icon.png"

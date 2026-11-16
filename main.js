@@ -6,7 +6,6 @@ const SITE = 'https://tinywatch.co.uk';
 const ALLOWED_HOSTS = ['tinywatch.co.uk', 'www.tinywatch.co.uk'];
 const EMBED_HOSTS = [];
 const BLOCKED = ['*://*.doubleclick.net/*', '*://*.popads.net/*'];
-const BAR_HEIGHT = 36;
 
 const { Client } = require('@xhayper/discord-rpc');
 const ActivityType = { Watching: 3 };
@@ -156,20 +155,41 @@ app.commandLine.appendSwitch('ignore-gpu-blocklist');
 if (!app.requestSingleInstanceLock()) app.quit();
 
 let win, view;
-let fullscreen = false;
 
 function layout() {
   const [w, h] = win.getContentSize();
-  const top = fullscreen ? 0 : BAR_HEIGHT;
-  view.setBounds({ x: 0, y: top, width: w, height: h - top });
+  // The site fills the whole window; there is no title bar
+  view.setBounds({ x: 0, y: 0, width: w, height: h });
 }
 
 function applyTheme() {
   const t = theme();
   win.setBackgroundColor(t.bg);
   view.setBackgroundColor(t.bg);
-  win.setTitleBarOverlay({ color: t.bg, symbolColor: t.fg, height: BAR_HEIGHT });
 }
+
+// Make the site's own nav bar act as the title bar. The min/max/close
+// buttons are added to the nav pill by preload.js.
+const FRAME_CSS = `
+  nav.fixed.top-0 { -webkit-app-region: drag; }
+  nav.fixed.top-0 a, nav.fixed.top-0 button, nav.fixed.top-0 input,
+  nav.fixed.top-0 [data-nav-pill] { -webkit-app-region: no-drag; }
+  #tw-window-controls { -webkit-app-region: no-drag; }
+  #tw-window-controls .tw-wc-close:hover { background: #e81123; color: #fff; }
+  #tw-window-controls.tw-wc-floating {
+    position: fixed; top: 12px; right: 12px; z-index: 2147483646; padding: 4px;
+    border-radius: 12px; background: rgba(0,0,0,.8); backdrop-filter: blur(12px);
+    border: 1px solid rgba(234,179,8,.2);
+  }
+  #tw-window-controls.tw-wc-floating .tw-wc-sep { display: none; }
+`;
+
+ipcMain.on('win:minimize', (e) => { if (e.sender === view?.webContents) win.minimize(); });
+ipcMain.on('win:toggle-max', (e) => {
+  if (e.sender !== view?.webContents) return;
+  win.isMaximized() ? win.unmaximize() : win.maximize();
+});
+ipcMain.on('win:close', (e) => { if (e.sender === view?.webContents) win.close(); });
 
 function createWindow() {
   const t = theme();
@@ -182,11 +202,11 @@ function createWindow() {
     backgroundColor: t.bg,
     autoHideMenuBar: true,
     titleBarStyle: 'hidden',
-    titleBarOverlay: { color: t.bg, symbolColor: t.fg, height: BAR_HEIGHT },
   });
 
-  // The window itself shows the slim title bar
-  win.loadFile(path.join(__dirname, 'titlebar.html'));
+  // Blank base page under the site view. Don't put drag regions here: they
+  // would sit on top of the site's nav and block clicks.
+  win.loadURL('about:blank');
 
   // The site lives in its own view underneath
   view = new WebContentsView({
@@ -205,6 +225,8 @@ function createWindow() {
 
   const wc = view.webContents;
 
+  wc.on('dom-ready', () => { wc.insertCSS(FRAME_CSS).catch(() => {}); });
+
   wc.on('did-fail-load', (_e, code, _d, _u, isMainFrame) => {
     if (isMainFrame && code !== -3) wc.loadFile(path.join(__dirname, 'offline.html'));
   });
@@ -222,13 +244,13 @@ function createWindow() {
     }
   });
 
-  // Video fullscreen: hide the bar and let the site fill the window
-  wc.on('enter-html-full-screen', () => { fullscreen = true; layout(); });
-  wc.on('leave-html-full-screen', () => { fullscreen = false; layout(); });
+  wc.on('enter-html-full-screen', layout);
+  wc.on('leave-html-full-screen', layout);
 
   win.on('resize', layout);
-  win.on('maximize', layout);
-  win.on('unmaximize', layout);
+  win.on('maximize', () => { layout(); wc.send('win:maximized', true); });
+  win.on('unmaximize', () => { layout(); wc.send('win:maximized', false); });
+  wc.on('did-finish-load', () => wc.send('win:maximized', win.isMaximized()));
   win.on('focus', () => wc.focus());
   win.once('ready-to-show', () => win.show());
 }
